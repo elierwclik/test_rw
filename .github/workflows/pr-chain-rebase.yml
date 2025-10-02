@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.issue.pull_request.head.ref }}
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          token: "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"
 
       # Configurar Git
       - name: Setup Git
@@ -43,7 +43,7 @@ jobs:
         id: pr-details
         run: |
           PR_NUMBER=$(echo ${{ github.event.issue.number }})
-          BASE_BRANCH=$(curl -s -H "Authorization: Bearer ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+          BASE_BRANCH=$(curl -s -H "Authorization: Bearer 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" \
             ${{ github.event.issue.pull_request.url }} | jq -r '.base.ref')
           echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
           echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
@@ -63,7 +63,7 @@ jobs:
         run: |
           git rebase-pr ${{ env.PR_NUMBER }} || {
             echo "Rebase failed, applying 'conlfict' tag"
-            curl -s -H "Authorization: Bearer ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+            curl -s -H "Authorization: Bearer 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" \
               -X POST \
               -d '{"labels":["conlfict"]}' \
               ${{ github.event.issue.pull_request.url }}/labels
@@ -89,7 +89,7 @@ jobs:
               git checkout -b $TEMP_BRANCH
               git rebase-pr ${{ env.PR_NUMBER }} || {
                 echo "Rebase failed for $NEXT_BRANCH, applying 'conlfict' tag"
-                curl -s -H "Authorization: Bearer ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+                curl -s -H "Authorization: Bearer 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" \
                   -X POST \
                   -d '{"labels":["conlfict"]}' \
                   ${{ github.event.issue.pull_request.url }}/labels
@@ -97,7 +97,7 @@ jobs:
               }
               git push origin $TEMP_BRANCH
               # Crear PR de la rama temporal a la siguiente rama
-              PR_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+              PR_RESPONSE=$(curl -s -H "Authorization: Bearer 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" \
                 -X POST \
                 -d "{\"title\":\"Chain PR: $CURRENT_BASE to $NEXT_BRANCH\",\"head\":\"$TEMP_BRANCH\",\"base\":\"$NEXT_BRANCH\",\"body\":\"Automated chain PR from $CURRENT_BASE. Comment 'fw r+' to proceed.\"}" \
                 ${{ github.repository }}/pulls)
