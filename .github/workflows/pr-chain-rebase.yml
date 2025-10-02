@@ -1,0 +1,115 @@
+name: Rebase PR Workflow
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  rebase-pr:
+    runs-on: ubuntu-latest
+    if: github.event.issue.pull_request && github.event.comment.body == 'fw r+'
+    steps:
+      # Checkout del repositorio
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.issue.pull_request.head.ref }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      # Configurar Git
+      - name: Setup Git
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git config --global alias.rebase-pr '!f() {\
+            p=$1 && \
+            b=`git symbolic-ref -q --short HEAD` && \
+            r=`git config branch.$b.remote`; \
+            r=${r:-origin} && \
+            git fetch $r pull/$p/head:pr-$p && \
+            git fetch -f $r pull/$p/merge:PR_MERGE_HEAD && \
+            git rebase --onto $b PR_MERGE_HEAD^ pr-$p && \
+            git checkout $b && \
+            git merge --quiet --ff-only pr-$p && \
+            git branch -D PR_MERGE_HEAD && \
+            git branch -D pr-$p && \
+            echo && \
+            git diff --stat $b..$r/$b && echo && \
+            git rebase -i $r/$b;}; f'
+
+      # Obtener información del PR
+      - name: Get PR details
+        id: pr-details
+        run: |
+          PR_NUMBER=$(echo ${{ github.event.issue.number }})
+          BASE_BRANCH=$(curl -s -H "Authorization: Bearer ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+            ${{ github.event.issue.pull_request.url }} | jq -r '.base.ref')
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
+
+      # Crear rama temporal en dev-staging
+      - name: Create temporary branch in dev-staging
+        run: |
+          TEMP_BRANCH="temp-${{ env.PR_NUMBER }}-${{ env.BASE_BRANCH }}"
+          git checkout ${{ env.BASE_BRANCH }}
+          git checkout -b $TEMP_BRANCH
+          git push origin $TEMP_BRANCH
+          echo "TEMP_BRANCH=$TEMP_BRANCH" >> $GITHUB_ENV
+
+      # Ejecutar rebase-pr
+      - name: Run rebase-pr
+        id: rebase
+        run: |
+          git rebase-pr ${{ env.PR_NUMBER }} || {
+            echo "Rebase failed, applying 'conlfict' tag"
+            curl -s -H "Authorization: Bearer ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+              -X POST \
+              -d '{"labels":["conlfict"]}' \
+              ${{ github.event.issue.pull_request.url }}/labels
+            exit 1
+          }
+
+      # Push a la rama base
+      - name: Push to base branch
+        if: success()
+        run: |
+          git push origin ${{ env.BASE_BRANCH }}
+
+      # Flujo en cadena: Crear PRs para ramas posteriores
+      - name: Chain PRs (17.0 -> 18.0 -> 19.0 -> master)
+        if: success()
+        run: |
+          declare -a BRANCHES=("18.0" "19.0" "master")
+          CURRENT_BASE=${{ env.BASE_BRANCH }}
+          for NEXT_BRANCH in "${BRANCHES[@]}"; do
+            if [ "$CURRENT_BASE" == "17.0" ] || [ "$CURRENT_BASE" == "18.0" ] || [ "$CURRENT_BASE" == "19.0" ]; then
+              TEMP_BRANCH="temp-${{ env.PR_NUMBER }}-$NEXT_BRANCH"
+              git checkout $NEXT_BRANCH
+              git checkout -b $TEMP_BRANCH
+              git rebase-pr ${{ env.PR_NUMBER }} || {
+                echo "Rebase failed for $NEXT_BRANCH, applying 'conlfict' tag"
+                curl -s -H "Authorization: Bearer ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+                  -X POST \
+                  -d '{"labels":["conlfict"]}' \
+                  ${{ github.event.issue.pull_request.url }}/labels
+                exit 1
+              }
+              git push origin $TEMP_BRANCH
+              # Crear PR de la rama temporal a la siguiente rama
+              PR_RESPONSE=$(curl -s -H "Authorization: Bearer ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+                -X POST \
+                -d "{\"title\":\"Chain PR: $CURRENT_BASE to $NEXT_BRANCH\",\"head\":\"$TEMP_BRANCH\",\"base\":\"$NEXT_BRANCH\",\"body\":\"Automated chain PR from $CURRENT_BASE. Comment 'fw r+' to proceed.\"}" \
+                ${{ github.repository }}/pulls)
+              NEW_PR_NUMBER=$(echo $PR_RESPONSE | jq -r '.number')
+              echo "Created PR #$NEW_PR_NUMBER from $TEMP_BRANCH to $NEXT_BRANCH"
+              exit 0 # Detener el flujo hasta que se resuelva el nuevo PR
+            fi
+            CURRENT_BASE=$NEXT_BRANCH
+          done
+
+      # Limpieza
+      - name: Cleanup temporary branch
+        if: always()
+        run: |
+          git push origin --delete ${{ env.TEMP_BRANCH }} || true
