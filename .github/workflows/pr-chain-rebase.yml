@@ -35,7 +35,7 @@ jobs:
             git branch -D pr-$p && \
             echo && \
             git diff --stat $b..$r/$b && echo && \
-            git rebase -i $r/$b;}; f'
+            git rebase $r/$b;}; f'
 
       # Obtener información del PR
       - name: Get PR details
