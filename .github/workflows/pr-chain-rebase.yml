@@ -15,7 +15,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.issue.pull_request.head.ref }}
-          token: "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"
 
       # Configurar Git
       - name: Setup Git
@@ -43,8 +42,7 @@ jobs:
         id: pr-details
         run: |
           PR_NUMBER=$(echo ${{ github.event.issue.number }})
-          BASE_BRANCH=$(curl -s -H "Authorization: Bearer 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" \
-            ${{ github.event.issue.pull_request.url }} | jq -r '.base.ref')
+          BASE_BRANCH=$(curl -s ${{ github.event.issue.pull_request.url }} | jq -r '.base.ref')
           echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
           echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
 
@@ -63,9 +61,7 @@ jobs:
         run: |
           git rebase-pr ${{ env.PR_NUMBER }} || {
             echo "Rebase failed, applying 'conlfict' tag"
-            curl -s -H "Authorization: Bearer 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" \
-              -X POST \
-              -d '{"labels":["conlfict"]}' \
+            curl -s -X POST -d '{"labels":["conlfict"]}' \
               ${{ github.event.issue.pull_request.url }}/labels
             exit 1
           }
@@ -73,8 +69,7 @@ jobs:
       # Push a la rama base
       - name: Push to base branch
         if: success()
-        run: |
-          git push origin ${{ env.BASE_BRANCH }}
+        run: git push origin ${{ env.BASE_BRANCH }}
 
       # Flujo en cadena: Crear PRs para ramas posteriores
       - name: Chain PRs (17.0 -> 18.0 -> 19.0 -> master)
@@ -89,18 +84,15 @@ jobs:
               git checkout -b $TEMP_BRANCH
               git rebase-pr ${{ env.PR_NUMBER }} || {
                 echo "Rebase failed for $NEXT_BRANCH, applying 'conlfict' tag"
-                curl -s -H "Authorization: Bearer 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" \
-                  -X POST \
-                  -d '{"labels":["conlfict"]}' \
+                curl -s -X POST -d '{"labels":["conlfict"]}' \
                   ${{ github.event.issue.pull_request.url }}/labels
                 exit 1
               }
               git push origin $TEMP_BRANCH
               # Crear PR de la rama temporal a la siguiente rama
-              PR_RESPONSE=$(curl -s -H "Authorization: Bearer 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" \
-                -X POST \
+              PR_RESPONSE=$(curl -s -X POST \
                 -d "{\"title\":\"Chain PR: $CURRENT_BASE to $NEXT_BRANCH\",\"head\":\"$TEMP_BRANCH\",\"base\":\"$NEXT_BRANCH\",\"body\":\"Automated chain PR from $CURRENT_BASE. Comment 'fw r+' to proceed.\"}" \
-                ${{ github.repository }}/pulls)
+                https://api.github.com/repos/${{ github.repository }}/pulls)
               NEW_PR_NUMBER=$(echo $PR_RESPONSE | jq -r '.number')
               echo "Created PR #$NEW_PR_NUMBER from $TEMP_BRANCH to $NEXT_BRANCH"
               exit 0 # Detener el flujo hasta que se resuelva el nuevo PR
@@ -111,5 +103,4 @@ jobs:
       # Limpieza
       - name: Cleanup temporary branch
         if: always()
-        run: |
-          git push origin --delete ${{ env.TEMP_BRANCH }} || true
+        run: git push origin --delete ${{ env.TEMP_BRANCH }} || true
